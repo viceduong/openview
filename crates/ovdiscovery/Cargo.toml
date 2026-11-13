@@ -1,0 +1,28 @@
+[package]
+name = "ovdiscovery"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "OpenView LAN discovery: mDNS/DNS-SD advertise + browse by device ID, interface enumeration, STUN, UPnP IGD"
+
+[dependencies]
+thiserror.workspace = true
+# Shared-port binds (SO_REUSEADDR / SO_REUSEPORT) and per-interface
+# multicast selection for mDNS and SSDP (pure Rust).
+socket2 = { version = "0.5", features = ["all"] }
+tracing = "0.1"
+
+# LAN interface enumeration (GetAdaptersAddresses) for mDNS.
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
+] }
+
+[lints]
+workspace = true

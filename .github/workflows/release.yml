@@ -1,0 +1,148 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build, e.g. v0.1.0"
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  windows:
+    name: Windows zip + installer
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+
+      - name: Check that the tag matches the workspace version
+        shell: pwsh
+        run: |
+          $v = [regex]::Match((Get-Content Cargo.toml -Raw), '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([^"]+)"').Groups[1].Value
+          if ("v$v" -ne $env:TAG) { throw "tag $env:TAG does not match Cargo.toml version $v" }
+
+      # Inno Setup is not guaranteed on the hosted image; install it if missing.
+      - name: Ensure Inno Setup 6
+        shell: pwsh
+        run: |
+          $known = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          if (-not (Get-Command iscc.exe -ErrorAction SilentlyContinue) -and -not ($known | Where-Object { Test-Path $_ })) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Package
+        shell: pwsh
+        run: ./scripts/package.ps1
+
+      - name: Require the installer
+        shell: pwsh
+        run: |
+          if (-not (Get-ChildItem dist -Filter 'OpenView-*-setup.exe')) { throw 'installer was not built' }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/OpenView-*-windows-x64-portable.zip
+            dist/OpenView-*-setup.exe
+          if-no-files-found: error
+
+  ios:
+    name: iOS unsigned .ipa
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      # Unsigned device build (no Apple account); users re-sign it with
+      # Sideloadly / AltStore. `--ipa` would need a signing team.
+      - name: Build unsigned .ipa
+        run: |
+          ios/build_ios.sh --device
+          mv ios/build/OpenView-unsigned.ipa "ios/build/OpenView-${TAG#v}-ios-unsigned.ipa"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios
+          path: ios/build/OpenView-*-ios-unsigned.ipa
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [windows, ios]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum OpenView-* | tee SHA256SUMS
+
+      # The body is the CHANGELOG section of this version.
+      - name: Release notes from CHANGELOG.md
+        run: |
+          version="${TAG#v}"
+          awk -v v="$version" '
+            /^## \[/ { if (found) exit; if (index($0, "## [" v "]") == 1) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "No CHANGELOG.md section for $version" >&2
+            exit 1
+          fi
+          cat >> notes.md <<'NOTES'
+
+          ---
+          **Downloads:** `OpenView-*-setup.exe` (per-user installer, no admin rights) or the portable zip for Windows 10/11 x64; the iOS `.ipa` is unsigned (re-sign with Sideloadly or AltStore). The Windows binaries are not code-signed yet, so SmartScreen may warn. Verify downloads against `SHA256SUMS`.
+          NOTES
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: OpenView ${{ env.TAG }}
+          body_path: notes.md
+          files: |
+            dist/OpenView-*
+            dist/SHA256SUMS
+          fail_on_unmatched_files: true
