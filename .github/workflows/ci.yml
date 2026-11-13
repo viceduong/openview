@@ -5,13 +5,15 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Reused by release.yml as a gate before packaging.
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -24,13 +26,15 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       # Installs the channel, components and targets from rust-toolchain.toml.
       - name: Install Rust toolchain
         run: rustup toolchain install
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Format
         run: cargo fmt --all --check
@@ -41,6 +45,11 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+      - name: Docs (rustdoc warnings are errors)
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps --locked
+
       - name: End-to-end (relay + host + viewer processes)
         shell: bash
         run: bash scripts/e2e_relay.sh
@@ -50,12 +59,39 @@ jobs:
         # Hosted runners may filter multicast: dial the LAN port directly.
         run: bash scripts/e2e_lan.sh --no-mdns
 
+  linux:
+    name: Linux (portable crates, fuzz harness)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      # The relay and the protocol crates are portable; the host, viewer
+      # and GUI are Windows-only.
+      - name: Test portable crates
+        run: cargo test -p ovcore -p ovtransport -p ovrelay -p ovdiscovery -p ovcommon --locked
+
+      - name: Clippy (portable crates)
+        run: cargo clippy -p ovcore -p ovtransport -p ovrelay -p ovdiscovery -p ovcommon --all-targets --locked -- -D warnings
+
+      - name: Check the fuzz harness
+        run: cargo check --manifest-path fuzz/Cargo.toml --locked
+
   msrv:
     name: MSRV (rust-version)
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Read rust-version from Cargo.toml
         id: msrv
@@ -65,12 +101,12 @@ jobs:
       - name: Install Rust ${{ steps.msrv.outputs.version }}
         run: rustup toolchain install ${{ steps.msrv.outputs.version }} --profile minimal
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: msrv
 
       - name: Check
-        run: cargo +${{ steps.msrv.outputs.version }} check --workspace --locked
+        run: cargo +${{ steps.msrv.outputs.version }} check --workspace --all-targets --locked
 
   cargo-deny:
     name: cargo-deny (${{ matrix.checks }})
@@ -85,16 +121,22 @@ jobs:
     # A new advisory against a dependency should not block unrelated PRs.
     continue-on-error: ${{ matrix.checks == 'advisories' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check ${{ matrix.checks }}
 
   docs:
-    name: Docs (relative links)
+    name: Docs (links, spelling)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Check relative links in Markdown files
         run: python3 scripts/check_links.py
+      - name: Spelling (typos, config in _typos.toml)
+        uses: crate-ci/typos@276087d9a4f06398b3e04825487805e2d7375888 # v1.52.2

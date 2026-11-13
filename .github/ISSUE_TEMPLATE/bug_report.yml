@@ -6,11 +6,11 @@ body:
     attributes:
       value: |
         Thanks for taking the time to report a bug. Please check
-        [Troubleshooting](https://github.com/OWNER/openview/blob/main/docs/TROUBLESHOOTING.md)
-        and the [known issues](https://github.com/OWNER/openview/blob/main/docs/KNOWN_ISSUES.md) first.
+        [Troubleshooting](https://github.com/viceduong/openview/blob/main/docs/TROUBLESHOOTING.md)
+        and the [known issues](https://github.com/viceduong/openview/blob/main/docs/KNOWN_ISSUES.md) first.
 
         **Do not paste PINs, device IDs, public IP addresses or relay URLs you want to keep private.**
-        Security problems go to a [private advisory](https://github.com/OWNER/openview/security/advisories/new) instead.
+        Security problems go to a [private advisory](https://github.com/viceduong/openview/security/advisories/new) instead.
   - type: textarea
     id: what-happened
     attributes:

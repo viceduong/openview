@@ -18,27 +18,60 @@ env:
   TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
+  # Fail fast on a tag that does not match the versions in the tree.
+  versions:
+    name: Check versions against the tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+
+      - name: Workspace and iOS versions match the tag
+        run: |
+          version="${TAG#v}"
+          cargo_v=$(awk '/^\[workspace\.package\]/{w=1; next} /^\[/{w=0} w && /^version *=/{gsub(/[" ]/, "", $0); sub(/version=/, "", $0); print; exit}' Cargo.toml)
+          ios_v=$(sed -n 's/^ *CFBundleShortVersionString: *"\([^"]*\)".*/\1/p' ios/OpenView/project.yml | head -1)
+          plist_v=$(grep -A1 'CFBundleShortVersionString' ios/OpenView/OpenView/App/Info.plist | sed -n 's/.*<string>\(.*\)<\/string>.*/\1/p')
+          echo "tag=$version Cargo.toml=$cargo_v project.yml=$ios_v Info.plist=$plist_v"
+          for v in "$cargo_v" "$ios_v" "$plist_v"; do
+            if [ "$v" != "$version" ]; then
+              echo "::error::tag $TAG does not match all versions (Cargo.toml $cargo_v, project.yml $ios_v, Info.plist $plist_v)"
+              exit 1
+            fi
+          done
+
+  # The full CI suite (fmt, clippy, tests, e2e, Linux, MSRV, cargo-deny)
+  # must pass on the tagged commit before anything is packaged.
+  ci:
+    name: CI
+    needs: versions
+    uses: ./.github/workflows/ci.yml
+
   windows:
     name: Windows zip + installer
+    needs: ci
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ env.TAG }}
+          persist-credentials: false
 
       - name: Install Rust toolchain
         run: rustup toolchain install
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: release
 
-      - name: Check that the tag matches the workspace version
-        shell: pwsh
-        run: |
-          $v = [regex]::Match((Get-Content Cargo.toml -Raw), '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([^"]+)"').Groups[1].Value
-          if ("v$v" -ne $env:TAG) { throw "tag $env:TAG does not match Cargo.toml version $v" }
+      # THIRD_PARTY_LICENSES.txt must come from cargo-about in a release.
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-about
 
       # Inno Setup is not guaranteed on the hosted image; install it if missing.
       - name: Ensure Inno Setup 6
@@ -51,14 +84,14 @@ jobs:
 
       - name: Package
         shell: pwsh
-        run: ./scripts/package.ps1
+        run: ./scripts/package.ps1 -RequireCargoAbout
 
       - name: Require the installer
         shell: pwsh
         run: |
           if (-not (Get-ChildItem dist -Filter 'OpenView-*-setup.exe')) { throw 'installer was not built' }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows
           path: |
@@ -66,19 +99,77 @@ jobs:
             dist/OpenView-*-setup.exe
           if-no-files-found: error
 
+  relay-linux:
+    name: Linux relay (${{ matrix.arch }})
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-unknown-linux-musl
+          - arch: aarch64
+            target: aarch64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+
+      - name: Install Rust toolchain and target
+        run: |
+          rustup toolchain install
+          rustup target add ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: relay-${{ matrix.target }}
+
+      # Zig is the cross linker: static musl binaries without a sysroot.
+      - name: Install Zig
+        run: python3 -m pip install --user ziglang
+
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-zigbuild
+
+      - name: Build ovrelay
+        run: cargo zigbuild --release --locked -p ovrelay --target ${{ matrix.target }}
+
+      - name: Package
+        run: |
+          version="${TAG#v}"
+          name="ovrelay-${version}-linux-${{ matrix.arch }}"
+          mkdir -p "stage/$name" dist
+          cp "target/${{ matrix.target }}/release/ovrelay" "stage/$name/"
+          cp LICENSE "stage/$name/"
+          cp packaging/linux/ovrelay.service "stage/$name/"
+          tar -C stage -czf "dist/$name.tar.gz" "$name"
+          file "stage/$name/ovrelay"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: relay-linux-${{ matrix.arch }}
+          path: dist/ovrelay-*-linux-*.tar.gz
+          if-no-files-found: error
+
   ios:
     name: iOS unsigned .ipa
+    needs: ci
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ env.TAG }}
+          persist-credentials: false
 
       - name: Install Rust toolchain
         run: rustup toolchain install
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: release
 
@@ -92,7 +183,7 @@ jobs:
           ios/build_ios.sh --device
           mv ios/build/OpenView-unsigned.ipa "ios/build/OpenView-${TAG#v}-ios-unsigned.ipa"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ios
           path: ios/build/OpenView-*-ios-unsigned.ipa
@@ -100,24 +191,34 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    needs: [windows, ios]
+    needs: [windows, relay-linux, ios]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: write
+      contents: write # create the release
+      id-token: write # sign the provenance attestation
+      attestations: write # store the provenance attestation
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ env.TAG }}
+          persist-credentials: false
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           merge-multiple: true
 
       - name: Checksums
         working-directory: dist
-        run: sha256sum OpenView-* | tee SHA256SUMS
+        run: sha256sum OpenView-* ovrelay-* | tee SHA256SUMS
+
+      - name: Build provenance attestation
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: |
+            dist/OpenView-*
+            dist/ovrelay-*
 
       # The body is the CHANGELOG section of this version.
       - name: Release notes from CHANGELOG.md
@@ -134,15 +235,25 @@ jobs:
           cat >> notes.md <<'NOTES'
 
           ---
-          **Downloads:** `OpenView-*-setup.exe` (per-user installer, no admin rights) or the portable zip for Windows 10/11 x64; the iOS `.ipa` is unsigned (re-sign with Sideloadly or AltStore). The Windows binaries are not code-signed yet, so SmartScreen may warn. Verify downloads against `SHA256SUMS`.
+          **Downloads:** `OpenView-*-setup.exe` (per-user installer, no admin rights) or the portable zip for Windows 10/11 x64; `ovrelay-*-linux-*.tar.gz` (static relay for Linux x86_64 / aarch64); the iOS `.ipa` is unsigned (re-sign with Sideloadly or AltStore). The Windows binaries are not code-signed yet, so SmartScreen may warn. Verify downloads against `SHA256SUMS` or with `gh attestation verify <file> --repo viceduong/openview`.
           NOTES
 
-      - uses: softprops/action-gh-release@v2
+      - name: Pre-release?
+        id: pre
+        run: |
+          case "$TAG" in
+            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ env.TAG }}
           name: OpenView ${{ env.TAG }}
           body_path: notes.md
+          prerelease: ${{ steps.pre.outputs.prerelease }}
           files: |
             dist/OpenView-*
+            dist/ovrelay-*
             dist/SHA256SUMS
           fail_on_unmatched_files: true

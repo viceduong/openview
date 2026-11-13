@@ -25,5 +25,5 @@ body:
     attributes:
       label: Checks
       options:
-        - label: I searched existing issues and the [known issues](https://github.com/OWNER/openview/blob/main/docs/KNOWN_ISSUES.md) list.
+        - label: I searched existing issues and the [known issues](https://github.com/viceduong/openview/blob/main/docs/KNOWN_ISSUES.md) list.
           required: true
