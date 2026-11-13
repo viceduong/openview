@@ -24,7 +24,7 @@ ovcore = { path = "../ovcore" }
 thiserror.workspace = true
 # Socket options the std API lacks (SO_RCVBUF/SO_SNDBUF for the UDP
 # carrier). Pure Rust (libc / windows-sys): the iOS staticlib stays C-free.
-socket2 = "0.5"
+socket2 = "0.6"
 # Reed-Solomon FEC for video on the direct path's media channel.
 # Pure Rust (runtime SIMD detection on x86 / NEON on aarch64), builds for iOS.
 reed-solomon-simd = "3.1"
