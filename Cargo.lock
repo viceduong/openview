@@ -3523,7 +3523,7 @@ dependencies = [
  "tracing",
  "windows 0.62.2",
  "zstd",
- "zune-jpeg 0.4.21",
+ "zune-jpeg 0.5.15",
 ]
 
 [[package]]
