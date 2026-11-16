@@ -420,10 +420,16 @@ Behaviour once enabled:
   times, with a backoff of 0.25 s × n capped at 2 s). The engine's REBIND
   then moves the host to the new port.
 - While probing or direct, pumps run at the engine deadline, at most 20 ms
-  apart (`afterRelayPump`).
+  apart (`afterRelayPump`). On the relay the engine keeps re-probing
+  (backoff 1 s → 10 s) for the whole session.
+- A `NetworkPathWatcher` change (status or interface set) re-creates the
+  idle path sockets and calls `ov_session_direct_network_changed`, so the
+  engine probes at once (or sends a REBIND on the active path).
 - The stats chip shows "Relay", "Probing…" or "Direct (LAN|Internet)"
   (`LivenessModel.path`). Promotions and fallbacks go to the session log;
-  probing and socket details go to the unified log at debug level.
+  probing and socket details, and the engine's path events
+  (`ov_session_direct_take_event`: probe answered / unanswered, rebinds,
+  demotion reasons), go to the unified log and DiagLog as `[detail]`.
 - If the relay dies while the direct path is active, the session continues
   on UDP (§4.2).
 

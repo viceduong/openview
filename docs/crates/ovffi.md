@@ -444,6 +444,8 @@ int32_t ov_session_on_direct_datagram(OvSession*, uint32_t path_id, const uint8_
 int32_t ov_session_direct_state(OvSession*);        // 0 relay, 1 probing, 2 direct, -1 null
 int64_t ov_session_direct_deadline_ms(OvSession*);  // ms to next needed pump, -1 none
 int64_t ov_session_direct_path(OvSession*);         // active path_id or -1
+int32_t ov_session_direct_network_changed(OvSession*); // re-probe now / REBIND
+int32_t ov_session_direct_take_event(OvSession*, char *out, size_t cap); // path event line, 0 = none
 int32_t ov_screen_set_direct_capable(OvScreen*, int32_t on);
 ```
 

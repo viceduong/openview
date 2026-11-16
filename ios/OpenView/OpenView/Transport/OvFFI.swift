@@ -314,6 +314,22 @@ final class OvSessionBox {
     /// The active direct path id, or -1.
     var directPath: Int64 { Breadcrumb.shared.run("ov_session_direct_path") { ov_session_direct_path(ptr) } }
 
+    /// The phone's network changed: re-probe the direct path now (on the
+    /// relay) or tell the host our new address (on the direct path).
+    func directNetworkChanged() {
+        _ = Breadcrumb.shared.run("ov_session_direct_network_changed") { ov_session_direct_network_changed(ptr) }
+    }
+
+    /// The oldest direct-path event line (promotion, fallback, probe
+    /// result), or nil.
+    func takeDirectEvent() -> String? {
+        var buf = [CChar](repeating: 0, count: 256)
+        let n = Breadcrumb.shared.run("ov_session_direct_take_event") {
+            ov_session_direct_take_event(ptr, &buf, buf.count)
+        }
+        return n > 0 ? String(cString: buf) : nil
+    }
+
     /// Drop every Swift-side callback (session teardown). The C sinks stay
     /// installed but become no-ops, and the closures — which capture the
     /// session's owner — are released so nothing keeps this box alive.

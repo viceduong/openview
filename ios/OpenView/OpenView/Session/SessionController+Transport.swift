@@ -414,6 +414,11 @@ extension SessionController {
     func afterRelayPump() {
         guard relayMode, !halted, let session else { return }
         publishDirectState()
+        if p2pEnabled {
+            while let line = session.takeDirectEvent() {
+                debug("Direct path: \(line)")
+            }
+        }
         guard p2pEnabled, let timer = p2pTimer else { return }
         let state = session.directState
         guard state > 0 else { return }
@@ -426,6 +431,17 @@ extension SessionController {
         }
         p2pTimerDue = due
         timer.schedule(deadline: due, repeating: .never, leeway: .milliseconds(1))
+    }
+
+    /// The phone's network changed (session queue): fresh sockets for the
+    /// idle candidate paths (they pick the new route), then let the engine
+    /// re-probe at once instead of waiting out its backoff.
+    func networkPathChanged() {
+        guard relayMode, !halted, p2pEnabled, let session, let paths = p2pPaths else { return }
+        debug("Network changed; re-probing the direct path")
+        paths.reopenIdle(activePathID: session.directPath)
+        session.directNetworkChanged()
+        afterRelayPump()
     }
 
     /// Publish "Relay" / "Probing…" / "Direct (LAN|Internet)" on change and

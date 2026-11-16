@@ -608,6 +608,11 @@ final class SessionController: ObservableObject {
         })
         // Thermal state / Low Power Mode changes re-apply the requested host
         // frame rate.
+        observers.append(nc.addObserver(forName: NetworkPathWatcher.didChange,
+                                        object: nil, queue: nil) { [weak self] _ in
+            guard let self else { return }
+            self.queue.async { self.networkPathChanged() }
+        })
         observers.append(nc.addObserver(forName: PowerGovernor.didChange,
                                         object: nil, queue: .main) { [weak self] _ in
             self?.powerStateChanged()
