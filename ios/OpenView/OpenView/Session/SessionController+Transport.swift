@@ -43,7 +43,6 @@ extension SessionController {
                 // Terminal command channel: screen frames reassemble here.
                 // (Fires under the Rust session lock — never send from
                 // here; PONG replies go out after the pump returns.)
-                self.netStats.record(bytes: payload.count)
                 self.screen.feed(payload)
             case 1:
                 if let text = String(data: payload, encoding: .utf8) {
@@ -222,8 +221,6 @@ extension SessionController {
         videoActive = false
         screenModel.video.end()
         videoDecoder.reset()
-        pendingHideGen = nil
-        lastPerfLogMs = nil
         lastPeerCaps = 0
         sentDesktopFx = false
         relayMode = false
@@ -233,6 +230,7 @@ extension SessionController {
         p2pTimerDue = nil
         lastDirectState = -1
         lastDirectPath = -1
+        directProbeSettled = false
         watchdogArmedMs = nil
     }
 
@@ -272,7 +270,6 @@ extension SessionController {
             }
             screen.livenessTick(nowMs: nowMs)
             publishLatency(nowMs: nowMs)
-            logPerfIfDue(nowMs: nowMs)
             // Watchdog: the host sends at least a keepalive every 5 s. A
             // session that heard nothing for longer is dead even if no
             // transport said so (e.g. a VPN dropped the relay and the UDP
@@ -445,7 +442,8 @@ extension SessionController {
     }
 
     /// Publish "Relay" / "Probing…" / "Direct (LAN|Internet)" on change and
-    /// log promotions / fallbacks.
+    /// log promotions / fallbacks. "Probing…" only for the first probe round
+    /// of a connection; the relay-only retries behind it stay "Relay".
     func publishDirectState() {
         guard relayMode, let session else { return }
         let state = p2pEnabled ? session.directState : 0
@@ -457,14 +455,18 @@ extension SessionController {
         let label: String
         switch state {
         case 1:
-            label = "Probing…"
+            label = directProbeSettled ? "Relay" : "Probing…"
         case 2:
+            directProbeSettled = true
             let kind = p2pPaths?.kind(of: path) ?? .internet
             label = "Direct (\(kind.label))"
             let addr = p2pPaths?.address(of: path) ?? "?"
             log("Direct path active (\(kind.label), \(addr))")
         default:
             label = "Relay"
+            if previous > 0 {
+                directProbeSettled = true
+            }
             if previous == 2 {
                 log("Direct path lost, back on the relay")
             }

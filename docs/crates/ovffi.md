@@ -34,7 +34,7 @@ Module map (`crates/ovffi/src/`):
 | `screen/feed.rs`, `screen/framebuffer.rs`, `screen/latency.rs`, `screen/liveness.rs`, `screen/sinks.rs`, `screen/video.rs` | Command decode and routing; zero-copy framebuffer access; latency telemetry (`ov_screen_latency_*`, `OvLatencyStats`); keepalive and watchdog; screen sink types and setters; H.264 pass-through |
 | `tests/mod.rs` | Tests through the C entry points |
 
-The header and the crate export the same 57 `ov_*` symbols; `src/tests/header.rs`
+The header and the crate export the same 62 `ov_*` symbols; `src/tests/header.rs`
 fails `cargo test -p ovffi` when they drift apart (it also checks the
 `ov_video_packet` and `ov_latency_stats` field order and the shared constants). Swift calls all of
 them except `ov_identity_fingerprint` and `ov_identity_free`.
